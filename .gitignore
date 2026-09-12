@@ -13,6 +13,10 @@ dist/
 # local policy
 agentguard.local.yaml
 
+# private signing material
+publisher.key
+*.private.key
+
 # editors / OS
 .vscode/
 .idea/
