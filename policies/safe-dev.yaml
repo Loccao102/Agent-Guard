@@ -1,0 +1,25 @@
+name: safe-dev
+version: 1.0.0
+description: Conservative defaults for local development projects.
+rules:
+  - id: safe-dev-source-read
+    kind: file
+    match:
+      - "src/**"
+      - "internal/**"
+      - "cmd/**"
+      - "docs/**"
+      - "README*"
+    decision: allow
+    reason: common project source and documentation path
+
+  - id: safe-dev-mcp-read
+    kind: mcp
+    match:
+      - "*/list*"
+      - "*/search*"
+      - "*/get*"
+      - "*/read*"
+      - "*/fetch*"
+    decision: allow
+    reason: common read-only MCP operation
