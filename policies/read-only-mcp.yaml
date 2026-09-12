@@ -1,0 +1,14 @@
+name: read-only-mcp
+version: 1.0.0
+description: Allow common read-only MCP operations while leaving unknown operations to the base policy.
+rules:
+  - id: mcp-read-list
+    kind: mcp
+    match:
+      - "*/list*"
+      - "*/search*"
+      - "*/get*"
+      - "*/read*"
+      - "*/fetch*"
+    decision: allow
+    reason: common read-only MCP operation
