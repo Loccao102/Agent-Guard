@@ -1,0 +1,20 @@
+# binaries
+agentguard
+agentguard.exe
+bin/
+dist/
+
+# runtime data
+.agentguard/
+*.db
+*.db-shm
+*.db-wal
+
+# local policy
+agentguard.local.yaml
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

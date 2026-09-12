@@ -1,0 +1,12 @@
+services:
+  agentguard:
+    build: .
+    ports:
+      - "127.0.0.1:7788:7788"
+    volumes:
+      - ./agentguard.example.yaml:/app/agentguard.yaml:ro
+      - agentguard-data:/app/.agentguard
+    restart: unless-stopped
+
+volumes:
+  agentguard-data:
