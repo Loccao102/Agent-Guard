@@ -1,6 +1,6 @@
 FROM golang:1.23-alpine AS build
 WORKDIR /src
-COPY go.mod go.sum* ./
+COPY go.mod ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/agentguard ./cmd/agentguard
@@ -9,7 +9,7 @@ FROM alpine:3.20
 RUN addgroup -S agentguard && adduser -S agentguard -G agentguard
 WORKDIR /app
 COPY --from=build /out/agentguard /usr/local/bin/agentguard
-COPY agentguard.example.yaml /app/agentguard.yaml
+COPY docker/agentguard.yaml /app/agentguard.yaml
 RUN mkdir -p /app/.agentguard && chown -R agentguard:agentguard /app
 USER agentguard
 EXPOSE 7788
