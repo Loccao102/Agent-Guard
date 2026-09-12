@@ -1,103 +1,126 @@
 # AgentGuard architecture
 
-## Design goals
+AgentGuard v1 is a local-first enforcement runtime for AI-agent tool calls. The trusted core is deliberately small: policy evaluation, risk classification, approvals, MCP forwarding decisions, and local audit persistence.
 
-1. **Local-first:** policies, audit logs and the dashboard work without an AgentGuard cloud account.
-2. **Agent-agnostic:** the core evaluates normalized actions rather than depending on one model vendor.
-3. **Fail understandable:** every decision contains a rule ID and human-readable reason.
-4. **Composable:** adapters can sit in front of shell, filesystem, MCP, Git, databases or custom tools.
-5. **Small trusted core:** policy evaluation and audit storage stay independent from integrations.
-
-## Current request flow
+## Runtime overview
 
 ```text
-Adapter / CLI / MCP proxy (future)
-              |
-              | {agent, kind, value}
-              v
-         /api/evaluate
-              |
-       +------+------+
-       |             |
-       v             v
- Policy Engine   Risk Analyzer
-       |             |
-       +------+------+
-              |
-              v
-          Decision
-              |
-              v
-        SQLite Audit
-              |
-              v
-     Local Dashboard/API
+                       Local Dashboard
+                    approvals / audit / stats
+                              |
+                              v
++----------------+      +-----+------+       +------------------+
+| Coding agent / | MCP  | AgentGuard | MCP   | Downstream stdio |
+| MCP client     +----->+ MCP proxy  +------>+ MCP server       |
++----------------+      +-----+------+       +------------------+
+                              |
+                              v
+                         Guard Runtime
+                        /      |       \
+                       v       v        v
+                  Policy    Risk     Approval
+                  Engine   Analyzer    Broker
+                       \       |        /
+                        +------+-------+
+                               |
+                               v
+                         Audit Store
+                      redaction + SQLite
+                       SHA-256 hash chain
 ```
 
-The policy decision and risk level are deliberately separate. A command can be high-risk yet explicitly allowed by a project policy, or low-risk but still require approval because no rule matched.
+## Package boundaries
 
-## Policy semantics
+### `internal/policy`
 
-Rules are ordered. The first rule matching both `kind` and one `match` pattern wins.
+Compiles ordered YAML rules and produces one of `allow`, `ask`, or `deny`. The first matching rule wins; otherwise the configured default decision is returned.
 
-- `allow`: the adapter may execute immediately.
-- `ask`: execution should pause until an approval mechanism grants permission.
-- `deny`: the adapter must not execute the action.
+The policy engine is intentionally unaware of MCP, HTTP, SQLite, or individual agent vendors.
 
-The MVP returns `ask` as a decision but does not yet implement a blocking approval channel. That is planned as a separate capability so adapters do not need to change when approval UX evolves.
+### `internal/risk`
 
-## Integration contract
+Adds an independent risk classification and human-readable reasons. Risk does not silently override policy in v1; it gives policy decisions and approvals useful context.
 
-Adapters normalize provider-specific operations into:
+### `internal/approval`
 
-```json
-{
-  "agent": "codex",
-  "kind": "shell",
-  "value": "git push origin main"
-}
+Owns pending approvals and in-memory session grants. Approval state is intentionally process-local. A restart clears session grants.
+
+### `internal/guard`
+
+Coordinates policy, risk, approval, and audit behavior. Integrations should use the guard runtime instead of duplicating ALLOW/ASK/DENY logic.
+
+### `internal/mcp`
+
+Contains the protocol-aware stdio boundary. It forwards normal MCP messages, inspects `tools/call`, asks AgentGuard for a decision, and only forwards permitted calls.
+
+The proxy is fail-closed when AgentGuard cannot provide a decision.
+
+### `internal/client`
+
+Small HTTP client used by local integrations to ask the running AgentGuard instance for decisions.
+
+### `internal/adapters`
+
+Generates transparent registration commands for Codex, Claude Code, and Gemini CLI. The adapter command generator does not automatically mutate global agent configuration.
+
+### `internal/audit`
+
+Persists local events in SQLite. Before storage, common secret/token patterns are redacted. New v1 records are linked with SHA-256 hashes so later mutation is detectable by chain verification.
+
+### `internal/packs` and `internal/signing`
+
+Policy packs provide a community-friendly distribution format. Ed25519 signatures can verify pack provenance before installation.
+
+### `internal/server`
+
+Exposes the loopback HTTP API and embeds the local dashboard. The server is deliberately local-only by default.
+
+## Approval sequence
+
+```text
+MCP client          Proxy          Guard          Broker         Dashboard
+    |                 |              |               |               |
+    | tools/call      |              |               |               |
+    +---------------->|              |               |               |
+    |                 | evaluate     |               |               |
+    |                 +------------->|               |               |
+    |                 |              | policy = ASK  |               |
+    |                 |              +-------------->|               |
+    |                 |              |               | pending card  |
+    |                 |              |               |<--------------+
+    |                 |              |               | allow / deny  |
+    |                 |              |               |<--------------+
+    |                 |              | resolution    |               |
+    |                 |              |<--------------+               |
+    |                 | result       |               |               |
+    |                 |<-------------+               |               |
+    | forwarded only if allowed      |               |               |
 ```
 
-The response contains:
+The waiting tool call is bounded by the approval timeout and the local HTTP request timeout. An incomplete approval resolves to a deny path rather than implicit forwarding.
 
-```json
-{
-  "decision": "ask",
-  "risk": "high",
-  "reason": "remote repository mutation requires approval",
-  "rule_id": "git-push",
-  "risk_reasons": ["repository state may be changed or lost"]
-}
-```
+## Data flow and privacy
 
-An enforcing adapter MUST obtain this decision before execution and MUST treat `deny` as non-executable. For `ask`, the current safe behavior is to stop and request human confirmation outside AgentGuard.
+The default installation does not require an AgentGuard-hosted service. Policies, approvals, and audit data remain on the local machine.
 
-## Storage
+Tool-call values may contain sensitive information. Redaction is performed before audit persistence, but the unredacted value necessarily exists in memory while AgentGuard evaluates and forwards the request.
 
-SQLite is used for local audit data because it provides transactional writes, indexing, easy inspection and zero external services. The schema is intentionally narrow and can later be exported to OpenTelemetry, SIEM or JSONL.
+## Trust assumptions
 
-## Future modules
+AgentGuard assumes the integration path is actually used. An agent or local process that bypasses the MCP proxy is outside the enforcement boundary.
 
-### Approval broker
-One-time grants, session grants, expiration and scoped approvals.
+AgentGuard also assumes the host operating system, AgentGuard binary, local policy file, and local account are not already fully compromised. It is not a kernel security boundary.
 
-### MCP proxy
-A native stdio/Streamable HTTP proxy that discovers MCP tools, normalizes each `tools/call`, evaluates it, and forwards only permitted calls.
+See [`../SECURITY.md`](../SECURITY.md) for the full v1 security model.
 
-### Native adapters
-Wrappers/hooks for Codex, Claude Code, Gemini CLI and IDE agents.
+## Extension points after v1
 
-### Policy packs
-Signed reusable policies for Git, Docker, Kubernetes, PostgreSQL, Node.js, .NET and Go.
+The architecture leaves room for:
 
-### Redaction
-Prevent sensitive arguments/results from entering logs while preserving an auditable fingerprint.
-
-## Non-goals for v0.1
-
-- Kernel-level sandboxing
-- Endpoint detection/response
-- Antivirus behavior
-- Secret vaulting
-- Cloud identity management
-- Automatically intercepting arbitrary processes without an adapter
+- Streamable HTTP MCP transport;
+- authenticated Unix-domain-socket / Windows named-pipe IPC;
+- structured policy conditions over MCP arguments;
+- native execution adapters for selected agent runtimes;
+- policy-pack registries and trust metadata;
+- OpenTelemetry or SIEM audit export; and
+- OS-native sandbox integration.
