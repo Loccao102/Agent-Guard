@@ -1,0 +1,37 @@
+name: Normalize v1 source
+
+on:
+  push:
+    branches:
+      - chore/v1-polish
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chore/v1-polish
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Normalize Go source and dependencies
+        run: |
+          gofmt -w ./cmd ./internal
+          go mod tidy
+      - name: Commit normalized source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add go.mod go.sum cmd internal
+          if git diff --cached --quiet; then
+            echo "Nothing to normalize"
+            exit 0
+          fi
+          git commit -m "chore: gofmt source and commit dependency lockfile"
+          git push origin HEAD:chore/v1-polish
