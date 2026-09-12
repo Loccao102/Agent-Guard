@@ -92,8 +92,8 @@ func (b *Broker) Resolve(id, decision string, remember bool) error {
 	}
 
 	res := Resolution{
-		Decision: decision,
-		Remember: remember && decision == "allow",
+		Decision:   decision,
+		Remember:   remember && decision == "allow",
 		ResolvedAt: now,
 	}
 	e.resolved = &res
