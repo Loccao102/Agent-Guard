@@ -23,10 +23,10 @@ type Event struct {
 }
 
 type Stats struct {
-	Total   int64 `json:"total"`
-	Allowed int64 `json:"allowed"`
-	Asked   int64 `json:"asked"`
-	Denied  int64 `json:"denied"`
+	Total    int64 `json:"total"`
+	Allowed  int64 `json:"allowed"`
+	Asked    int64 `json:"asked"`
+	Denied   int64 `json:"denied"`
 	HighRisk int64 `json:"high_risk"`
 }
 
@@ -97,10 +97,10 @@ func (s *Store) Stats() (Stats, error) {
 	var st Stats
 	err := s.db.QueryRow(`SELECT
 		COUNT(*),
-		SUM(CASE WHEN decision='allow' THEN 1 ELSE 0 END),
-		SUM(CASE WHEN decision='ask' THEN 1 ELSE 0 END),
-		SUM(CASE WHEN decision='deny' THEN 1 ELSE 0 END),
-		SUM(CASE WHEN risk IN ('high','critical') THEN 1 ELSE 0 END)
+		COALESCE(SUM(CASE WHEN decision='allow' THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN decision='ask' THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN decision='deny' THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN risk IN ('high','critical') THEN 1 ELSE 0 END), 0)
 		FROM events`).Scan(&st.Total, &st.Allowed, &st.Asked, &st.Denied, &st.HighRisk)
 	if err != nil {
 		return Stats{}, err
