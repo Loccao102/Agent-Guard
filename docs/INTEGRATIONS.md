@@ -58,16 +58,14 @@ Any stdio MCP client that lets you specify a command can launch AgentGuard direc
 agentguard mcp proxy \
   --agent my-agent \
   --server my-server \
+  --token <optional-token> \
   -- my-mcp-server --stdio
 ```
 
-The proxy forwards ordinary MCP traffic unchanged. For JSON-RPC `tools/call` messages it constructs an action such as:
+> **Note on Authentication:** If `--token` is omitted, AgentGuard automatically discovers the auth token from the `AGENTGUARD_TOKEN` environment variable or reads `.agentguard/auth_token`.
 
-```text
-my-server/search_documents {"query":"agent security"}
-```
+The proxy forwards ordinary MCP traffic unchanged. For JSON-RPC `tools/call` messages it unpacks the call arguments into structured fields (e.g. `{"query":"agent security"}`), checks policy rules (including any `args:` pattern constraints), and asks the AgentGuard runtime for a decision before forwarding the call.
 
-and asks the AgentGuard runtime for a decision before forwarding the call.
 
 ## Approval behavior
 

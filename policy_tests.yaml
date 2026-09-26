@@ -1,0 +1,36 @@
+# AgentGuard Policy Test Suite
+tests:
+  - name: "Block sensitive .env files"
+    kind: "file"
+    value: ".env.production"
+    expect: "deny"
+
+  - name: "Block destructive shell command"
+    kind: "shell"
+    value: "rm -rf /var/data"
+    expect: "deny"
+
+  - name: "Allow read-only git status"
+    kind: "shell"
+    value: "git status -s"
+    expect: "allow"
+
+  - name: "Allow automated testing commands"
+    kind: "shell"
+    value: "go test -v ./..."
+    expect: "allow"
+
+  - name: "Require human approval for git push"
+    kind: "shell"
+    value: "git push origin main"
+    expect: "ask"
+
+  - name: "Require approval for dependency installation"
+    kind: "shell"
+    value: "npm install axios"
+    expect: "ask"
+
+  - name: "Default policy fallback for unlisted action"
+    kind: "mcp"
+    value: "stripe/transfer_funds"
+    expect: "ask"

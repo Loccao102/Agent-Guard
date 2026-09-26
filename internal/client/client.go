@@ -13,11 +13,20 @@ import (
 
 type Client struct {
 	Endpoint string
+	Token    string
 	HTTP     *http.Client
 }
 
 func New(endpoint string) *Client {
-	return &Client{Endpoint: strings.TrimRight(endpoint, "/"), HTTP: &http.Client{}}
+	return NewWithToken(endpoint, "")
+}
+
+func NewWithToken(endpoint, token string) *Client {
+	return &Client{
+		Endpoint: strings.TrimRight(endpoint, "/"),
+		Token:    token,
+		HTTP:     &http.Client{},
+	}
 }
 
 type evaluatePayload struct {
@@ -35,6 +44,9 @@ func (c *Client) Evaluate(ctx context.Context, action guard.Action, wait bool) (
 		return guard.Result{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return guard.Result{}, fmt.Errorf("contact AgentGuard: %w", err)

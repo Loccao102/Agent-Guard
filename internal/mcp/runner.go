@@ -3,17 +3,20 @@ package mcp
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
-	"github.com/Loccao102/Agent-Guard/internal/client"
-	"github.com/Loccao102/Agent-Guard/internal/guard"
 	"io"
 	"os"
 	"os/exec"
 	"sync"
+
+	"github.com/Loccao102/Agent-Guard/internal/client"
+	"github.com/Loccao102/Agent-Guard/internal/guard"
 )
 
 type RunnerOptions struct {
 	Endpoint   string
+	Token      string
 	Agent      string
 	ServerName string
 	Command    string
@@ -72,7 +75,7 @@ func Run(ctx context.Context, opts RunnerOptions) error {
 			_ = out.Line(append([]byte(nil), s.Bytes()...))
 		}
 	}()
-	c := client.New(opts.Endpoint)
+	c := client.NewWithToken(opts.Endpoint, opts.Token)
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
@@ -84,7 +87,17 @@ func Run(ctx context.Context, opts RunnerOptions) error {
 			}
 			continue
 		}
-		result, err := c.Evaluate(ctx, guard.Action{Agent: opts.Agent, Kind: "mcp", Value: ActionValue(opts.ServerName, call), Meta: map[string]string{"server": opts.ServerName, "tool": call.Name}}, true)
+		var rawArgs map[string]any
+		if len(call.Arguments) > 0 {
+			_ = json.Unmarshal(call.Arguments, &rawArgs)
+		}
+		result, err := c.Evaluate(ctx, guard.Action{
+			Agent: opts.Agent,
+			Kind:  "mcp",
+			Value: ActionValue(opts.ServerName, call),
+			Meta:  map[string]string{"server": opts.ServerName, "tool": call.Name},
+			Args:  rawArgs,
+		}, true)
 		if err != nil {
 			response := DeniedResponse(msg.ID, "AgentGuard is unavailable", "critical")
 			if len(response) > 0 {

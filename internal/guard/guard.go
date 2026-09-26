@@ -16,6 +16,7 @@ type Action struct {
 	Kind  string            `json:"kind"`
 	Value string            `json:"value"`
 	Meta  map[string]string `json:"meta,omitempty"`
+	Args  map[string]any    `json:"args,omitempty"`
 }
 
 type Result struct {
@@ -47,7 +48,7 @@ func (g *Guard) Evaluate(ctx context.Context, action Action, wait bool) (Result,
 		result := Result{Decision: policy.Allow, Risk: r.Level, Reason: "allowed by session approval", RiskReasons: r.Reasons, Remembered: true}
 		return result, g.record(action, result)
 	}
-	decision := g.engine.Evaluate(action.Kind, action.Value)
+	decision := g.engine.EvaluateWithArgs(action.Kind, action.Value, action.Args)
 	riskResult := g.analyzer.Analyze(action.Kind, action.Value)
 	result := Result{Decision: decision.Decision, Risk: riskResult.Level, Reason: decision.Reason, RuleID: decision.RuleID, RiskReasons: riskResult.Reasons}
 	if decision.Decision != policy.Ask {
@@ -82,6 +83,89 @@ func (g *Guard) Evaluate(ctx context.Context, action Action, wait bool) (Result,
 		result.Reason = "denied by user"
 	}
 	return result, g.record(action, result)
+}
+
+// EvaluateBatch performs high-throughput policy and risk evaluation for multiple actions,
+// and persists non-blocking audit events using Store.RecordBatch in a single transaction.
+func (g *Guard) EvaluateBatch(ctx context.Context, actions []Action) ([]Result, error) {
+	if len(actions) == 0 {
+		return nil, nil
+	}
+	results := make([]Result, len(actions))
+	auditEvents := make([]audit.Event, 0, len(actions))
+	now := time.Now().UTC()
+
+	for i, action := range actions {
+		if g.broker.HasGrant(action.Agent, action.Kind, action.Value) {
+			r := g.analyzer.Analyze(action.Kind, action.Value)
+			results[i] = Result{
+				Decision:    policy.Allow,
+				Risk:        r.Level,
+				Reason:      "allowed by session approval",
+				RiskReasons: r.Reasons,
+				Remembered:  true,
+			}
+			auditEvents = append(auditEvents, audit.Event{
+				Timestamp: now,
+				Agent:     action.Agent,
+				Kind:      action.Kind,
+				Value:     action.Value,
+				Decision:  results[i].Decision,
+				Risk:      results[i].Risk,
+				Reason:    results[i].Reason,
+			})
+			continue
+		}
+
+		decision := g.engine.EvaluateWithArgs(action.Kind, action.Value, action.Args)
+		riskResult := g.analyzer.Analyze(action.Kind, action.Value)
+		results[i] = Result{
+			Decision:    decision.Decision,
+			Risk:        riskResult.Level,
+			Reason:      decision.Reason,
+			RuleID:      decision.RuleID,
+			RiskReasons: riskResult.Reasons,
+		}
+
+		if decision.Decision != policy.Ask {
+			auditEvents = append(auditEvents, audit.Event{
+				Timestamp: now,
+				Agent:     action.Agent,
+				Kind:      action.Kind,
+				Value:     action.Value,
+				Decision:  results[i].Decision,
+				Risk:      results[i].Risk,
+				Reason:    results[i].Reason,
+				RuleID:    results[i].RuleID,
+			})
+			continue
+		}
+
+		req, err := g.broker.Create(action.Agent, action.Kind, action.Value, riskResult.Level, decision.Reason, decision.RuleID)
+		if err != nil {
+			return nil, err
+		}
+		results[i].ApprovalID = req.ID
+		results[i].Pending = true
+		auditEvents = append(auditEvents, audit.Event{
+			Timestamp: now,
+			Agent:     action.Agent,
+			Kind:      action.Kind,
+			Value:     action.Value,
+			Decision:  results[i].Decision,
+			Risk:      results[i].Risk,
+			Reason:    results[i].Reason,
+			RuleID:    results[i].RuleID,
+		})
+	}
+
+	if len(auditEvents) > 0 {
+		if err := g.store.RecordBatch(auditEvents); err != nil {
+			return nil, err
+		}
+	}
+
+	return results, nil
 }
 
 func (g *Guard) record(action Action, result Result) error {

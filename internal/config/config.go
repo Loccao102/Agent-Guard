@@ -9,8 +9,9 @@ import (
 )
 
 type Server struct {
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
+	Host  string `yaml:"host"`
+	Port  int    `yaml:"port"`
+	Token string `yaml:"token,omitempty"`
 }
 
 type Audit struct {
@@ -42,6 +43,9 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.Server.Port == 0 {
 		cfg.Server.Port = 7788
+	}
+	if cfg.Server.Token == "" {
+		cfg.Server.Token = os.Getenv("AGENTGUARD_TOKEN")
 	}
 	if cfg.Audit.Database == "" {
 		cfg.Audit.Database = ".agentguard/agentguard.db"

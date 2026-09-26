@@ -278,12 +278,20 @@ GET /api/audit/verify
 
 This is **tamper-evident**, not tamper-proof. A hostile process with full control of your machine can replace the database or AgentGuard itself.
 
-## Local API
+## Local API & Authentication
+
+To protect the local REST API from unauthorized local processes and malicious browser scripts (CSRF), AgentGuard includes local authentication token protection.
+
+- **Token Resolution**: AgentGuard checks `server.token` in your configuration, the `AGENTGUARD_TOKEN` environment variable, or automatically generates a cryptographically secure token saved to `.agentguard/auth_token` with restricted `0600` permissions.
+- **Client Authentication**: Pass your token via `Authorization: Bearer <token>`, the `X-AgentGuard-Token: <token>` header, or query parameter `?token=<token>` (used by EventSource SSE).
+- **Dashboard Access**: Accessing `http://127.0.0.1:7788/?token=<token>` automatically configures your browser session.
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| `GET` | `/api/health` | Local health check |
+| `GET` | `/api/health` | Public local health check |
+| `GET` | `/api/events/stream` | Real-time Server-Sent Events (SSE) live stream |
 | `POST` | `/api/evaluate` | Evaluate and audit an action |
+| `POST` | `/api/evaluate/batch` | High-throughput batch evaluation & audit persistence |
 | `GET` | `/api/approvals` | Pending approvals |
 | `POST` | `/api/approvals/{id}/decision` | Resolve an approval |
 | `DELETE` | `/api/session-grants` | Revoke in-memory grants |
@@ -291,10 +299,75 @@ This is **tamper-evident**, not tamper-proof. A hostile process with full contro
 | `GET` | `/api/stats` | Dashboard counters |
 | `GET` | `/api/audit/verify` | Verify hash-chain integrity |
 
+## Deep JSON Argument Inspection
+
+Policies can inspect structured arguments inside MCP tool calls, protecting against dangerous SQL queries, file deletions, or parameters:
+
+```yaml
+rules:
+  - id: deny-drop-table
+    kind: mcp
+    match:
+      - "postgres/query"
+      - "sqlite/execute"
+    args:
+      query:
+        - "*DROP TABLE*"
+        - "*TRUNCATE*"
+    decision: deny
+    reason: destructive database statement blocked
+```
+
+## Automated Policy Testing (`test-policy`)
+
+You can run automated test suites against your policy configuration before deployment:
+
+```bash
+agentguard test-policy --config agentguard.yaml --tests policy_tests.yaml
+```
+
+Example test suite (`policy_tests.yaml`):
+
+```yaml
+tests:
+  - name: "Block sensitive credentials"
+    kind: "file"
+    value: ".env.production"
+    expect: "deny"
+
+  - name: "Block destructive shell command"
+    kind: "shell"
+    value: "rm -rf /var/data"
+    expect: "deny"
+
+  - name: "Allow read-only git status"
+    kind: "shell"
+    value: "git status -s"
+    expect: "allow"
+
+  - name: "Require approval for remote git push"
+    kind: "shell"
+    value: "git push origin main"
+    expect: "ask"
+```
+
+## Benchmark & scale testing (50k - 200k)
+
+AgentGuard includes an optimized high-throughput benchmarking suite to test policy evaluation, risk classification, SQLite WAL audit ingestion, and SHA-256 hash-chain verification under intense workloads:
+
+```bash
+# Run 50,000 testcases
+agentguard bench --count 50000
+
+# Run 200,000 testcases
+agentguard bench --count 200000
+```
+
 Example:
 
 ```bash
 curl -X POST http://127.0.0.1:7788/api/evaluate \
+  -H "Authorization: Bearer <your-token>" \
   -H "Content-Type: application/json" \
   -d '{"agent":"custom-agent","kind":"mcp","value":"docs/search {\"query\":\"AgentGuard\"}","wait":false}'
 ```
@@ -343,7 +416,7 @@ Agent / MCP client ---> MCP Proxy ---> Guard Runtime
                             v
                       Downstream MCP
 
-Guard Runtime ---> redaction ---> SQLite ---> SHA-256 audit chain
+Guard Runtime ---> redaction ---> SQLite (WAL) ---> SHA-256 audit chain
 ```
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
@@ -351,16 +424,18 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/INTEGRATIONS.md`](
 ## CLI
 
 ```text
-agentguard init
-agentguard run
-agentguard check
-agentguard mcp proxy
-agentguard adapter <codex|claude|gemini>
-agentguard pack install
-agentguard keygen
-agentguard sign
-agentguard verify
-agentguard audit verify
+agentguard init [--force]
+agentguard run [--config agentguard.yaml]
+agentguard check --kind shell --value "git push origin main"
+agentguard test-policy [--config agentguard.yaml] [--tests policy_tests.yaml]
+agentguard mcp proxy [--token TOKEN] --agent codex --server demo -- <server> [args...]
+agentguard adapter <codex|claude|gemini> --name demo -- <server> [args...]
+agentguard pack install --pack policies/safe-dev.yaml
+agentguard keygen [--private publisher.key] [--public publisher.pub]
+agentguard sign --file PACK --private-key KEY
+agentguard verify --file PACK --public-key KEY
+agentguard audit verify [--config agentguard.yaml]
+agentguard bench [--count 50000|200000]
 agentguard version
 ```
 

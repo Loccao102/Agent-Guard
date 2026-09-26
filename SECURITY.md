@@ -33,7 +33,7 @@ Session grants are intentionally not persisted in v1 so a stale approval does no
 
 The dashboard binds to `127.0.0.1` by default. Do not expose it to an untrusted network without adding an authenticated transport layer.
 
-The local API currently relies on the loopback trust boundary rather than user authentication. Other processes running as the same local user may be able to reach it.
+The local API is protected with a local authentication token (`server.token` in configuration, `AGENTGUARD_TOKEN` environment variable, or auto-generated at `.agentguard/auth_token` with `0600` permissions). Requests to `/api/...` endpoints must provide this token via `Authorization: Bearer <token>`, `X-AgentGuard-Token`, or `?token=<token>`, preventing unauthorized local processes and malicious browser scripts (CSRF) from manipulating policies or approvals.
 
 ## Audit data
 
@@ -59,12 +59,11 @@ Useful reports include reproduction steps, affected version or commit, impact, a
 
 ## Security roadmap
 
-Potential post-v1 hardening work includes:
+Potential hardening work includes:
 
-- authenticated local IPC;
 - OS-specific execution adapters and sandbox integrations;
 - Streamable HTTP MCP proxy support;
-- richer structured argument policies;
 - external audit anchoring / SIEM export;
 - signed policy-pack registry metadata; and
 - fuzzing of MCP framing and policy parsing.
+

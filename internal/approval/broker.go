@@ -41,10 +41,11 @@ type entry struct {
 }
 
 type Broker struct {
-	mu      sync.Mutex
-	pending map[string]*entry
-	grants  map[string]struct{}
-	ttl     time.Duration
+	mu        sync.Mutex
+	pending   map[string]*entry
+	grants    map[string]struct{}
+	ttl       time.Duration
+	listeners []func(event string, payload any)
 }
 
 func New(ttl time.Duration) *Broker {
@@ -55,6 +56,23 @@ func New(ttl time.Duration) *Broker {
 		pending: make(map[string]*entry),
 		grants:  make(map[string]struct{}),
 		ttl:     ttl,
+	}
+}
+
+func (b *Broker) OnEvent(fn func(event string, payload any)) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.listeners = append(b.listeners, fn)
+}
+
+func (b *Broker) notify(event string, payload any) {
+	b.mu.Lock()
+	list := make([]func(event string, payload any), len(b.listeners))
+	copy(list, b.listeners)
+	b.mu.Unlock()
+
+	for _, fn := range list {
+		go fn(event, payload)
 	}
 }
 
@@ -73,6 +91,8 @@ func (b *Broker) Create(agent, kind, value, risk, reason, ruleID string) (Reques
 	b.cleanupLocked(now)
 	b.pending[id] = &entry{request: req, notify: make(chan struct{})}
 	b.mu.Unlock()
+
+	b.notify("approval.created", req)
 	return req, nil
 }
 
@@ -83,11 +103,11 @@ func (b *Broker) Resolve(id, decision string, remember bool) error {
 
 	now := time.Now().UTC()
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	b.cleanupLocked(now)
 
 	e, ok := b.pending[id]
 	if !ok || e.resolved != nil {
+		b.mu.Unlock()
 		return ErrNotFound
 	}
 
@@ -101,6 +121,9 @@ func (b *Broker) Resolve(id, decision string, remember bool) error {
 		b.grants[grantKey(e.request.Agent, e.request.Kind, e.request.Value)] = struct{}{}
 	}
 	close(e.notify)
+	b.mu.Unlock()
+
+	b.notify("approval.resolved", map[string]any{"id": id, "decision": decision, "remember": remember})
 	return nil
 }
 
